@@ -1,0 +1,15 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# airflow runtime (logs, generated config, pids, secrets)
+orchestration/airflow_home/*
+!orchestration/airflow_home/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# env
+.env

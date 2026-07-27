@@ -1,0 +1,28 @@
+[workspace]
+authors = ["sumanth-manchala <manchala.msr@gmail.com>"]
+channels = ["conda-forge"]
+name = "datalake"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[activation.env]
+AIRFLOW_HOME = "$PIXI_PROJECT_ROOT/orchestration/airflow_home"
+AIRFLOW__DATABASE__SQL_ALCHEMY_CONN = "postgresql+psycopg2://sumanthmanchala@localhost:5432/airflow"
+AIRFLOW__CORE__EXECUTOR = "LocalExecutor"
+AIRFLOW__CORE__DAGS_FOLDER = "$PIXI_PROJECT_ROOT/orchestration/dags"
+AIRFLOW__CORE__LOAD_EXAMPLES = "False"
+
+[tasks]
+lint = "ruff check ."
+format = "ruff format ."
+typecheck = "ty check orchestration/dags"
+start = "airflow standalone"
+
+[dependencies]
+python = "3.12.*"
+ruff = "*"
+ty = "*"
+apache-airflow = "3.3.0.*"
+apache-airflow-providers-postgres = "*"
+psycopg2 = "*"
+asyncpg = ">=0.31.0,<0.32"
