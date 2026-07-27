@@ -2,6 +2,9 @@
 .pixi/*
 !.pixi/config.toml
 
+# local postgres cluster (data, logs, sockets)
+.pgdata/
+
 # airflow runtime (logs, generated config, pids, secrets)
 orchestration/airflow_home/*
 !orchestration/airflow_home/.gitkeep

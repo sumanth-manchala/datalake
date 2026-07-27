@@ -6,8 +6,15 @@ platforms = ["osx-arm64"]
 version = "0.1.0"
 
 [activation.env]
+# bundled postgres cluster (server and all client tools read these)
+PGDATA = "$PIXI_PROJECT_ROOT/.pgdata"
+PGHOST = "localhost"
+PGPORT = "5433"
+PGUSER = "lakehouse_pg_user"
+PGPASSWORD = "lakehouse_pg_password"
+# airflow
 AIRFLOW_HOME = "$PIXI_PROJECT_ROOT/orchestration/airflow_home"
-AIRFLOW__DATABASE__SQL_ALCHEMY_CONN = "postgresql+psycopg2://sumanthmanchala@localhost:5432/airflow"
+AIRFLOW__DATABASE__SQL_ALCHEMY_CONN = "postgresql+psycopg2://lakehouse_pg_user:lakehouse_pg_password@localhost:5433/airflow"
 AIRFLOW__CORE__EXECUTOR = "LocalExecutor"
 AIRFLOW__CORE__DAGS_FOLDER = "$PIXI_PROJECT_ROOT/orchestration/dags"
 AIRFLOW__CORE__LOAD_EXAMPLES = "False"
@@ -16,7 +23,10 @@ AIRFLOW__CORE__LOAD_EXAMPLES = "False"
 lint = "ruff check ."
 format = "ruff format ."
 typecheck = "ty check orchestration/dags"
-start = "airflow standalone"
+db-init = "bash scripts/init_db.sh"
+db-start = "pg_ctl status || pg_ctl -l $PGDATA/postgres.log start"
+db-stop = "pg_ctl stop"
+start = { cmd = "airflow standalone", depends-on = ["db-start"] }
 
 [dependencies]
 python = "3.12.*"
@@ -26,3 +36,4 @@ apache-airflow = "3.3.0.*"
 apache-airflow-providers-postgres = "*"
 psycopg2 = "*"
 asyncpg = ">=0.31.0,<0.32"
+postgresql = ">=18.4,<19"
