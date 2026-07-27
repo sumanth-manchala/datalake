@@ -38,13 +38,7 @@ def metadata_conn(ephemeral_cluster):
     # No `with conn:` here — psycopg2 runs statements in a transaction inside a
     # connection context manager even when autocommit is True, so writes would
     # stay invisible to the code under test until the block exits.
-    conn = psycopg2.connect(
-        host=os.environ["PGHOST"],
-        port=os.environ["PGPORT"],
-        user=os.environ["PGUSER"],
-        password=os.environ["PGPASSWORD"],
-        dbname="metadata",
-    )
+    conn = psycopg2.connect(dbname="metadata")
     conn.autocommit = True
     yield conn
     conn.close()

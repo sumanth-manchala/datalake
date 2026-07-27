@@ -153,7 +153,8 @@ template for future ones (e.g. `ingestion`):
 
 ## Testing
 
-`pixi run test` (all), `pixi run test-unit`, `pixi run test-integration`.
+`pixi run test` runs everything; scope with `pixi run pytest orchestration/tests/unit`
+(or `.../integration`).
 
 - **Unit tests** monkeypatch the pause-flag lookup and cover the timetable's scheduling,
   serialization, and fail-open behaviour with no database involved.

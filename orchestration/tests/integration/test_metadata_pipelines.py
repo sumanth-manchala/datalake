@@ -2,11 +2,9 @@
 
 import importlib
 
-import pytest
+import pendulum
 from airflow.timetables.base import DataInterval, TimeRestriction
 from airflow.utils.state import DagRunState
-
-pendulum = pytest.importorskip("pendulum")
 
 
 def _reload_factory():

@@ -16,8 +16,8 @@ with socket.socket() as _s:
 
 EPHEMERAL_ROOT = Path(tempfile.mkdtemp(prefix="datalake-test-"))
 
-_user = os.environ.get("PGUSER", "lakehouse_pg_user")
-_password = os.environ.get("PGPASSWORD", "lakehouse_pg_password")
+_user = os.environ["PGUSER"]
+_password = os.environ["PGPASSWORD"]
 
 os.environ.update(
     {

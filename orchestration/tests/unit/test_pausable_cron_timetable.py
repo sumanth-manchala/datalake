@@ -3,11 +3,10 @@
 from datetime import UTC, datetime
 
 import pausable_cron_timetable as pct
+import pendulum
 import pytest
 from airflow.timetables.base import DataInterval, TimeRestriction
 from pausable_cron_timetable import PausableCronTimetable
-
-pendulum = pytest.importorskip("pendulum")
 
 
 @pytest.fixture
@@ -73,10 +72,6 @@ def test_is_paused_fails_open_on_db_error(monkeypatch):
         raise ConnectionError("db down")
 
     monkeypatch.setattr(pct.psycopg2, "connect", boom)
-    monkeypatch.setenv("PGHOST", "localhost")
-    monkeypatch.setenv("PGPORT", "1")
-    monkeypatch.setenv("PGUSER", "x")
-    monkeypatch.setenv("PGPASSWORD", "x")
     assert pct._is_paused("sample_pipeline") is False
 
 

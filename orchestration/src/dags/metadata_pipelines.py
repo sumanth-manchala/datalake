@@ -8,7 +8,6 @@ is_schedule_paused flag pauses scheduled runs (manual triggers keep working).
 from __future__ import annotations
 
 import logging
-import os
 
 import psycopg2
 from airflow.sdk import dag, task
@@ -19,14 +18,8 @@ log = logging.getLogger(__name__)
 
 def _fetch_pipelines() -> list[tuple[str, str]]:
     try:
-        with psycopg2.connect(
-            host=os.environ["PGHOST"],
-            port=os.environ["PGPORT"],
-            user=os.environ["PGUSER"],
-            password=os.environ["PGPASSWORD"],
-            dbname="metadata",
-            connect_timeout=5,
-        ) as conn, conn.cursor() as cur:
+        # host/port/user/password come from the PG* env vars (libpq reads them natively)
+        with psycopg2.connect(dbname="metadata", connect_timeout=5) as conn, conn.cursor() as cur:
             cur.execute("SELECT pipeline_name, schedule FROM data_pipelines")
             return cur.fetchall()
     except Exception:
