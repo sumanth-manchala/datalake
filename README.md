@@ -138,9 +138,27 @@ Caveats (by design, see the module docstrings):
 
 ## Layout
 
-- `orchestration/dags/` — Airflow DAGs (incl. the metadata-driven DAG factory)
-- `orchestration/plugins/` — Airflow plugins (custom timetable)
+Each module follows a `src` / `tests` layout; `orchestration` is the first module and the
+template for future ones (e.g. `ingestion`):
+
+- `orchestration/src/dags/` — Airflow DAGs (incl. the metadata-driven DAG factory)
+- `orchestration/src/plugins/` — Airflow plugins (custom timetable)
+- `orchestration/tests/unit/` — fast tests, no database
+- `orchestration/tests/integration/` — tests against a throwaway Postgres cluster
+- `orchestration/pytest.ini` — pytest config for this module
 - `orchestration/airflow_home/` — Airflow runtime home (gitignored: logs, generated config)
 - `scripts/init_db.sh` — cluster bootstrap/converge (see above)
 - `scripts/metadata_schema.sql` — metadata DB schema + seed
 - `.pgdata/` — Postgres data directory (gitignored)
+
+## Testing
+
+`pixi run test` (all), `pixi run test-unit`, `pixi run test-integration`.
+
+- **Unit tests** monkeypatch the pause-flag lookup and cover the timetable's scheduling,
+  serialization, and fail-open behaviour with no database involved.
+- **Integration tests** spin up an **ephemeral Postgres cluster** in a temp dir on a random
+  port (session fixture in `orchestration/tests/integration/conftest.py`, reusing
+  `scripts/init_db.sh` so the bootstrap script is itself under test), migrate the Airflow
+  schema, then exercise the real DAG factory and run a pipeline end-to-end with `dag.test()`.
+  Your dev cluster in `.pgdata/` is never touched.

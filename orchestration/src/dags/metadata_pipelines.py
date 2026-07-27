@@ -34,7 +34,7 @@ def _fetch_pipelines() -> list[tuple[str, str]]:
         return []
 
 
-def _build_dag(pipeline_name: str, schedule: str) -> None:
+def _build_dag(pipeline_name: str, schedule: str):
     @dag(
         dag_id=f"pipeline_{pipeline_name}",
         schedule=PausableCronTimetable(schedule, pipeline_name=pipeline_name),
@@ -48,8 +48,9 @@ def _build_dag(pipeline_name: str, schedule: str) -> None:
 
         run_pipeline()
 
-    pipeline()
+    return pipeline()
 
 
 for name, cron in _fetch_pipelines():
-    _build_dag(name, cron)
+    # expose each DAG as a module attribute so tests (and DagBag) can reach it
+    globals()[f"pipeline_{name}"] = _build_dag(name, cron)
