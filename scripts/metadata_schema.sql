@@ -10,6 +10,23 @@ INSERT INTO data_pipelines (pipeline_name, schedule)
 VALUES ('sample_pipeline', '*/5 * * * *')
 ON CONFLICT (pipeline_name) DO NOTHING;
 
+-- ── Transfer queue ───────────────────────────────────────────────────────────
+-- Work queue for adhoc/bulk data transfers. New pending rows are picked up by the
+-- per-channel poll triggers (orchestration/src/plugins/transfer_triggers.py); each row
+-- becomes exactly one worker DAG run. Requests are append-only; rerun = clear the run.
+
+CREATE TABLE IF NOT EXISTS transfer_requests (
+    request_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    channel    text NOT NULL DEFAULT 'adhoc',     -- 'adhoc' | 'bulk' — the lane
+    priority   int  NOT NULL DEFAULT 0,           -- higher runs first within a lane
+    status     text NOT NULL DEFAULT 'pending',   -- pending|dispatched|running|done|failed
+    payload    jsonb NOT NULL DEFAULT '{}',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS transfer_requests_pending
+    ON transfer_requests (channel, priority DESC, created_at) WHERE status = 'pending';
+
 -- ── Storage layer ────────────────────────────────────────────────────────────
 -- A warehouse is a catalog+storage pairing on some platform. Entities (datasets,
 -- filesets) are logical; where they physically live is an entity_placement row.

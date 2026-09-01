@@ -135,6 +135,34 @@ Caveats (by design, see the module docstrings):
 - **Manual triggers are never blocked** by this flag — unlike Airflow's native DAG pause,
   which freezes manual runs too. Use whichever matches your intent.
 
+## Event-driven transfer queue
+
+Adhoc/bulk data-transfer requests are rows in `metadata.transfer_requests`
+(`channel`, `priority`, `payload`; lifecycle `pending → dispatched → running → done|failed`).
+Instead of a polling sensor, Airflow 3 event-driven scheduling picks them up:
+
+- **Poll trigger** (`orchestration/plugins/transfer_triggers.py`): a `BaseEventTrigger` per
+  channel runs in the Triggerer and emits one asset event per new pending row (~5s latency;
+  plain ANSI SQL, so any RDBMS works by swapping the driver).
+- **Dispatcher** (`orchestration/dags/transfer_dags.py`): one DAG scheduled on *any* lane's
+  asset **or** a minutely cron sweep. It routes each event to its lane's worker DAG,
+  priority-sorted, and fans out one worker run per request via `TriggerDagRunOperator`.
+  The guarded `pending → dispatched` transition dedupes duplicate events; the cron sweep
+  re-dispatches requests whose wake-up event Airflow lost (a real race, observed live —
+  an event landing mid-scheduler-evaluation can be absorbed without creating a run).
+- **Workers** `transfer_adhoc` / `transfer_bulk`: one DAG run per request
+  (`conf["ticket"]`), tasks `start → stage → transform → load`, `max_active_runs=32` per
+  lane — bulk loads can never starve adhoc requests. Clearing a failed run retries the
+  *same* request.
+
+Submit a request (the rest is automatic):
+
+```sql
+-- pixi run psql -d metadata
+INSERT INTO transfer_requests (channel, priority, payload)
+VALUES ('adhoc', 5, '{"src": "s3://bucket/path"}');
+```
+
 ## Storage layer: Datasets on Iceberg
 
 Structured data lives in **Datasets** (Iceberg tables today — the SDK hides the format, so
