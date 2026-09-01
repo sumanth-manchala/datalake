@@ -1,3 +1,4 @@
 [environment]
-# airflow puts the plugins folder on sys.path at runtime; mirror that for ty
-extra-paths = ["orchestration/src/plugins", "orchestration/src/dags"]
+# airflow puts the plugins folder on sys.path at runtime; mirror that for ty.
+# api/src and sdk/src mirror each module's pytest pythonpath.
+extra-paths = ["orchestration/src/plugins", "orchestration/src/dags", "api/src", "sdk/src"]

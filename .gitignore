@@ -5,6 +5,9 @@
 # local postgres cluster (data, logs, sockets)
 .pgdata/
 
+# local object stores (seaweedfs + rustfs data, logs, pids)
+.s3data/
+
 # airflow runtime (logs, generated config, pids, secrets)
 orchestration/airflow_home/*
 !orchestration/airflow_home/.gitkeep

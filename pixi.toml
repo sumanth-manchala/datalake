@@ -23,11 +23,15 @@ AIRFLOW__CORE__LOAD_EXAMPLES = "False"
 [tasks]
 lint = "ruff check ."
 format = "ruff format ."
-typecheck = "ty check orchestration"
-test = "pytest orchestration"
+typecheck = "ty check orchestration api sdk"
+test = "pytest orchestration && pytest api && pytest sdk"
 db-init = "bash scripts/init_db.sh"
 db-start = "pg_ctl status || pg_ctl -l $PGDATA/postgres.log start"
 db-stop = "pg_ctl stop"
+s3-start = "bash scripts/init_s3.sh"
+# SIGKILL: seaweedfs ignores TERM/INT; fine for a local dev store (crash-tolerant format)
+s3-stop = "bash -c 'kill -9 $(cat .s3data/*.pid) 2> /dev/null; rm -f .s3data/*.pid; true'"
+api-start = { cmd = "uvicorn --app-dir api/src lakehouse_api.app:app --port 8000", depends-on = ["db-start"] }
 start = { cmd = "airflow standalone", depends-on = ["db-start"] }
 
 [dependencies]
@@ -40,3 +44,13 @@ psycopg2 = "*"
 asyncpg = ">=0.31.0,<0.32"
 postgresql = ">=18.4,<19"
 pytest = ">=9.1.1,<10"
+pyiceberg = ">=0.11.1,<0.12"
+pyarrow = ">=25.0.0,<26"
+python-duckdb = ">=1.5.5,<2"
+fastapi = ">=0.136.3,<0.137"
+uvicorn = ">=0.52.1,<0.53"
+httpx = ">=0.28.1,<0.29"
+s3fs = ">=2026.6.0,<2027"
+seaweedfs = ">=4.40,<5"
+rustfs = ">=1.0.0beta.12,<2"
+pandas = ">=3.0.5,<4"

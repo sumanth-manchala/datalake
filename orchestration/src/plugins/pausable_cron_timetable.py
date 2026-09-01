@@ -35,9 +35,7 @@ def _is_paused(pipeline_name: str) -> bool:
             row = cur.fetchone()
             return bool(row[0]) if row else False
     except Exception:
-        log.warning(
-            "Could not read pause flag for pipeline %r; scheduling normally", pipeline_name
-        )
+        log.warning("Could not read pause flag for pipeline %r; scheduling normally", pipeline_name)
         return False
 
 
