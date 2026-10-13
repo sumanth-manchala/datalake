@@ -44,22 +44,14 @@ class IcebergHandler:
     def _table(self) -> Table:
         return self._catalog.load_table(self._identifier)
 
-    def append(self, data, op_id: str) -> dict[str, Any]:
-        table = self._table()
-        arrow = self._stamp(data, op_id)
-        table.append(arrow, snapshot_properties={"lakehouse-op-id": op_id})
-        return self._write_result(table, arrow)
-
     def overwrite(self, data, op_id: str) -> dict[str, Any]:
-        """Dynamic partition overwrite (replaces exactly the partitions present in `data`);
-        full overwrite when the table is unpartitioned."""
+        """Dynamic partition overwrite: replaces exactly the partitions present in `data`."""
         table = self._table()
         arrow = self._stamp(data, op_id)
-        props = {"lakehouse-op-id": op_id}
-        if table.spec().fields:
-            table.dynamic_partition_overwrite(arrow, snapshot_properties=props)
-        else:
-            table.overwrite(arrow, snapshot_properties=props)
+        if len(arrow) == 0:
+            # pyiceberg commits nothing for 0 rows; we'd log the previous op's snapshot
+            raise ValueError("overwrite needs at least one row")
+        table.dynamic_partition_overwrite(arrow, snapshot_properties={"lakehouse-op-id": op_id})
         return self._write_result(table, arrow)
 
     def scan(self, columns, where, snapshot_id, include_lineage) -> tuple[pa.Table, int | None]:
@@ -102,18 +94,12 @@ class IcebergHandler:
 
     def _write_result(self, table: Table, arrow: pa.Table) -> dict[str, Any]:
         current = table.current_snapshot()
-        partition_by = self._doc.get("partition_by") or []
-        partitions = (
-            sorted(
-                {
-                    tuple(str(v) for v in row)
-                    for row in zip(
-                        *(arrow.column(c).to_pylist() for c in partition_by), strict=True
-                    )
-                }
-            )
-            if partition_by
-            else []
+        partition_by = self._doc["partition_by"]
+        partitions = sorted(
+            {
+                tuple(str(v) for v in row)
+                for row in zip(*(arrow.column(c).to_pylist() for c in partition_by), strict=True)
+            }
         )
         return {
             "snapshot_id": current.snapshot_id if current else None,

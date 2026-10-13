@@ -1,9 +1,12 @@
 """Entry point: connect() -> Lakehouse, the control-plane client and Dataset factory."""
 
+import json
 from dataclasses import asdict
 from typing import Any
 
 import httpx
+import pyarrow as pa
+from pyiceberg.io.pyarrow import _pyarrow_to_schema_without_ids
 
 from lakehouse.context import Process, resolve_actor, resolve_platform, resolve_process
 from lakehouse.dataset import Dataset
@@ -21,7 +24,16 @@ def _split(qualified_name: str) -> tuple[str, str]:
 
 
 def _normalize_schema(schema) -> list[dict[str, Any]]:
-    """Accept {'col': 'type', ...} or [{'name':..., 'type':..., 'required':...}, ...]."""
+    """Accept a pyarrow schema, {'col': type, ...} or [{'name', 'type', 'required'}, ...].
+
+    Types are Iceberg schema JSON: 'long', 'decimal(18,2)', or nested
+    {'type': 'list', 'element': 'string'} / {'type': 'map', 'key': ..., 'value': ...} /
+    {'type': 'struct', 'fields': [...]}. Arrow nullability becomes `required`.
+    """
+    if isinstance(schema, pa.Schema):
+        # ponytail: private pyiceberg helper (pinned <0.12); re-check on upgrade
+        iceberg = _pyarrow_to_schema_without_ids(schema)
+        return json.loads(iceberg.model_dump_json())["fields"]
     if isinstance(schema, dict):
         return [{"name": n, "type": t} for n, t in schema.items()]
     return [dict(f) for f in schema]

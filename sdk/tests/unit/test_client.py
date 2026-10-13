@@ -1,4 +1,5 @@
 import httpx
+import pyarrow as pa
 import pytest
 from lakehouse.client import Lakehouse, LakehouseError, _normalize_schema, _split
 from lakehouse.context import Process
@@ -51,3 +52,23 @@ def test_actor_header_sent_on_every_request():
 
     make_client(handler, actor="svc-ingest").warehouses()
     assert seen["actor"] == "svc-ingest"
+
+
+def test_normalize_schema_from_arrow():
+    arrow = pa.schema(
+        [
+            pa.field("day", pa.date32(), nullable=False),
+            pa.field("tags", pa.list_(pa.string())),
+            pa.field("customer", pa.struct([pa.field("id", pa.int64(), nullable=False)])),
+            pa.field("amount", pa.decimal128(18, 2)),
+        ]
+    )
+    fields = {f["name"]: f for f in _normalize_schema(arrow)}
+
+    assert fields["day"]["type"] == "date"
+    assert fields["day"]["required"] is True
+    assert fields["tags"]["type"]["type"] == "list"
+    assert fields["tags"]["type"]["element"] == "string"
+    assert fields["customer"]["type"]["fields"][0]["name"] == "id"
+    assert fields["customer"]["type"]["fields"][0]["required"] is True
+    assert fields["amount"]["type"] == "decimal(18, 2)"

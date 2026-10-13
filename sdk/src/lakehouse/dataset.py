@@ -35,20 +35,14 @@ class Dataset:
         return self.doc["version"]
 
     # ── writes ──────────────────────────────────────────────────────────────
-    def append(self, data) -> str:
-        return self._write("append", data)
-
     def overwrite(self, data) -> str:
-        """Dynamic partition overwrite (full overwrite when unpartitioned)."""
-        return self._write("overwrite", data)
-
-    def _write(self, op_kind: str, data) -> str:
+        """Dynamic partition overwrite: replaces exactly the partitions present in `data`."""
         op_id = str(uuidlib.uuid4())
-        result = getattr(self._handler, op_kind)(data, op_id)
+        result = self._handler.overwrite(data, op_id)
         self._client.report_op(
             self.doc,
             op_id=op_id,
-            op_kind=op_kind,
+            op_kind="overwrite",
             snapshot_id=result["snapshot_id"],
             details={k: result[k] for k in ("rows_written", "schema_id", "partitions")},
         )
@@ -98,13 +92,10 @@ class Dataset:
         return self._handler.snapshot_for_timestamp(datetime.fromisoformat(as_of))
 
     # ── metadata / control-plane ────────────────────────────────────────────
-    def alter(self, add_columns=None, rename_columns=None, drop_columns=None) -> dict[str, Any]:
-        return self._client.alter_dataset(
-            self.doc,
-            add_columns=add_columns or {},
-            rename_columns=rename_columns or {},
-            drop_columns=drop_columns or [],
-        )
+    def alter(self, add_columns: dict[str, str]) -> dict[str, Any]:
+        """Add optional columns — the only backwards-compatible change. Renames, drops and
+        type changes need a new version: lake.create_dataset(..., new_version=True)."""
+        return self._client.alter_dataset(self.doc, add_columns=add_columns)
 
     def rollback(self, to) -> dict[str, Any]:
         return self._client.rollback_dataset(self.doc, to=str(to))

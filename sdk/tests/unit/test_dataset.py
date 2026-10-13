@@ -11,7 +11,7 @@ DOC = {
     "namespace": "ns",
     "name": "t",
     "version": 1,
-    "partition_by": [],
+    "partition_by": ["x"],
     "format": "iceberg",
     "connector": "pyiceberg",
     "warehouse_name": "wh",
@@ -44,7 +44,7 @@ def test_unknown_format_rejected(client):
 
 
 def test_write_generates_op_id_and_reports(dataset, handler, client):
-    handler.append.return_value = {
+    handler.overwrite.return_value = {
         "snapshot_id": 42,
         "rows_written": 2,
         "schema_id": 0,
@@ -52,13 +52,13 @@ def test_write_generates_op_id_and_reports(dataset, handler, client):
     }
     data = pa.table({"x": [1, 2]})
 
-    op_id = dataset.append(data)
+    op_id = dataset.overwrite(data)
 
-    handler.append.assert_called_once_with(data, op_id)
+    handler.overwrite.assert_called_once_with(data, op_id)
     client.report_op.assert_called_once_with(
         DOC,
         op_id=op_id,
-        op_kind="append",
+        op_kind="overwrite",
         snapshot_id=42,
         details={"rows_written": 2, "schema_id": 0, "partitions": []},
     )
@@ -87,7 +87,7 @@ def test_resolve_as_of_passthrough(dataset, as_of, expected):
 
 
 def test_resolve_as_of_op_id_via_ledger(dataset, client):
-    client.get_op.return_value = {"snapshot_id": 7, "op_kind": "append"}
+    client.get_op.return_value = {"snapshot_id": 7, "op_kind": "overwrite"}
     op_id = "0b7c8a72-9f1e-4a3b-8d21-93f6a2f4c111"
     assert dataset._resolve_as_of(op_id) == 7
     client.get_op.assert_called_once_with(op_id)
@@ -109,3 +109,8 @@ def test_resolve_as_of_timestamp_uses_handler(dataset, handler, as_of):
     assert dataset._resolve_as_of(as_of) == 99
     (passed,) = handler.snapshot_for_timestamp.call_args.args
     assert passed == datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_alter_only_adds_columns(dataset, client):
+    dataset.alter({"channel": "string"})
+    client.alter_dataset.assert_called_once_with(DOC, add_columns={"channel": "string"})

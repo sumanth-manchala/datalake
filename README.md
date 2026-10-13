@@ -189,16 +189,29 @@ lake = connect("http://localhost:8000")
 ds = lake.create_dataset(
     "sales.orders",
     schema={"day": "string", "amount": "long"},
-    partition_by=["day"],
+    partition_by=["day"],  # required, non-empty
     warehouse_name="local-seaweedfs",
 )
-ds.append(pa.table({"day": ["2026-08-01"], "amount": [1]}))  # pandas or arrow
+# complex types: Iceberg schema JSON (no field ids), or just pass a pyarrow schema
+lake.create_dataset(
+    "crm.events",
+    schema={
+        "day": "date",
+        "amount": "decimal(18,2)",
+        "tags": {"type": "list", "element": "string"},
+        "attrs": {"type": "map", "key": "string", "value": "long"},
+        "customer": {"type": "struct", "fields": [{"name": "id", "type": "long"}]},
+    },
+    partition_by=["day"],  # partition columns must be primitive
+    warehouse_name="local-seaweedfs",
+)
+# the only write: dynamic partition overwrite — replaces only the partitions present
+# in the frame, so reruns are idempotent. pandas or arrow; empty frames are rejected.
 op = ds.overwrite(pa.table({"day": ["2026-08-01"], "amount": [2]}))
-# dynamic partition overwrite: replaces only the
-# partitions present in the frame — idempotent reruns
 ds.to_pandas(where="amount > 0")  # also to_arrow() / to_duckdb("orders")
 ds.to_pandas(as_of=op)  # time travel: op id, ISO timestamp, or snapshot id
-ds.alter(add_columns={"channel": "string"})  # compatible schema evolution, ledgered
+# schema evolution is additive only: new columns are optional; anything else = new_version
+ds.alter(add_columns={"channel": "string"})
 ds.history()  # every write AND read: actor, process, snapshot
 ds.partitions()
 ds.schema(as_of=op)
@@ -207,7 +220,7 @@ ds.rollback(to=op)  # snapshot rollback, ledgered as an op
 
 ### Lineage, versions, rollback
 
-- Every operation (create/append/overwrite/alter/read/rollback/drop) is a row in the `ops`
+- Every operation (create/overwrite/alter/read/rollback/drop) is a row in the `ops`
   ledger with `actor` + a generic process context — Airflow task context is auto-detected,
   model runs pass `connect(process=Process(kind="model_run", name=..., run_id=...))`.
 - Every written row carries a hidden `_op_id` column (near-zero Parquet cost) — row-level

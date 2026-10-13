@@ -1,6 +1,10 @@
+from typing import get_args
+
 import pytest
 from lakehouse_api.catalog import (
+    FIELD_TYPES,
     OP_ID_COLUMN,
+    FieldType,
     build_schema,
     load_warehouse_catalog,
     schema_as_json,
@@ -25,9 +29,51 @@ def test_build_schema_appends_lineage_column_and_identity_spec():
     assert spec.fields[0].source_id == schema.find_field("day").field_id
 
 
-def test_build_schema_unpartitioned():
-    _, spec = build_schema(FIELDS, [])
-    assert spec.fields == ()
+NESTED = [
+    {"name": "day", "type": "date", "required": True},
+    {"name": "amount", "type": "decimal(18,2)", "required": False},
+    {
+        "name": "tags",
+        "type": {"type": "list", "element": "string", "element-required": False},
+        "required": False,
+    },
+    {
+        "name": "attrs",
+        "type": {"type": "map", "key": "string", "value": "long", "value-required": True},
+        "required": False,
+    },
+    {
+        "name": "customer",
+        "type": {
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "long", "required": True},
+                {
+                    "name": "emails",
+                    "type": {"type": "list", "element": "string", "element-required": True},
+                    "required": False,
+                },
+            ],
+        },
+        "required": False,
+    },
+]
+
+
+def test_nested_schema_round_trips_with_unique_ids():
+    schema, spec = build_schema(NESTED, ["day"])
+
+    assert schema_as_json(schema) == [
+        *NESTED,
+        {"name": OP_ID_COLUMN, "type": "string", "required": False},
+    ]
+    ids = [schema.find_field(name).field_id for name in schema._name_to_id]
+    assert len(ids) == len(set(ids))
+    assert spec.fields[0].source_id == schema.find_field("day").field_id
+
+
+def test_field_type_literal_matches_field_types():
+    assert set(get_args(FieldType)) == set(FIELD_TYPES)
 
 
 @pytest.mark.parametrize(
@@ -35,7 +81,9 @@ def test_build_schema_unpartitioned():
     [
         (FIELDS, ["nope"], "partition_by columns not in schema"),
         (FIELDS + [{"name": OP_ID_COLUMN, "type": "string"}], [], "reserved"),
-        ([{"name": "x", "type": "uint128"}], [], "unsupported field types"),
+        ([{"name": "x", "type": "uint128"}], [], "unsupported type 'uint128'"),
+        ([{"name": "x", "type": {"type": "variant"}}], [], "unsupported type 'variant'"),
+        (NESTED, ["tags"], "partition columns must be primitive"),
     ],
 )
 def test_build_schema_rejects(fields, partition_by, match):

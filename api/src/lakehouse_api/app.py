@@ -7,22 +7,24 @@ rollback, drop.
 
 import uuid as uuidlib
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from psycopg2.extras import Json
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints, model_validator
 
 from lakehouse_api.catalog import (
-    FIELD_TYPES,
     OP_ID_COLUMN,
+    FieldType,
     build_schema,
+    iceberg_type,
     load_warehouse_catalog,
+    new_id_counter,
     schema_as_json,
 )
 from lakehouse_api.db import get_db
 
-app = FastAPI(title="lakehouse control plane")
+app = FastAPI(title="lakehouse control plane", separate_input_output_schemas=False)
 
 Conn = Annotated[Any, Depends(get_db)]
 Actor = Annotated[str, Header(alias="X-Lakehouse-Actor")]
@@ -34,17 +36,57 @@ class ProcessCtx(BaseModel):
     run_id: str | None = None
 
 
+# Schema JSON = Iceberg's type serialization without ids (ids in the input are ignored).
+DecimalName = Annotated[str, StringConstraints(pattern=r"^decimal\(\d+,\s*\d+\)$")]
+
+
+class ListSpec(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    type: Literal["list"]
+    element: "TypeSpec"
+    element_required: bool = Field(False, alias="element-required")
+
+
+class MapSpec(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    type: Literal["map"]
+    key: "TypeSpec"
+    value: "TypeSpec"
+    value_required: bool = Field(False, alias="value-required")
+
+
+class StructSpec(BaseModel):
+    type: Literal["struct"]
+    fields: list["FieldSpec"] = Field(min_length=1)
+
+
+class PrimitiveName(RootModel[FieldType]):
+    """Named so OpenAPI codegen keeps the enum (unioned with DecimalName it collapses to str)."""
+
+
+TypeSpec = (
+    PrimitiveName
+    | DecimalName
+    | Annotated[ListSpec | MapSpec | StructSpec, Field(discriminator="type")]
+)
+
+
 class FieldSpec(BaseModel):
     name: str
-    type: str
+    type: TypeSpec
     required: bool = False
+
+
+ListSpec.model_rebuild()
+MapSpec.model_rebuild()
+StructSpec.model_rebuild()
 
 
 class CreateDataset(BaseModel):
     namespace: str
     name: str
     fields: list[FieldSpec] = Field(alias="schema")
-    partition_by: list[str]  # required; [] = explicitly unpartitioned
+    partition_by: list[str] = Field(min_length=1)  # every write is a dynamic partition overwrite
     warehouse_name: str | None = None
     platform: str = "local"
     description: str | None = None
@@ -63,12 +105,96 @@ class OpReport(BaseModel):
 
 
 class AlterRequest(BaseModel):
-    add_columns: dict[str, str] = {}
-    rename_columns: dict[str, str] = {}
-    drop_columns: list[str] = []
+    """Additive-only schema evolution: new columns are always optional, so existing writers
+    (which omit them) and readers (which read null for old rows) keep working."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    add_columns: dict[str, TypeSpec] = Field(min_length=1)
     version: int | None = None
     platform: str = "local"
     process: ProcessCtx | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _additive_only(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.keys() & {"rename_columns", "drop_columns"}:
+            raise ValueError(
+                "only adding optional columns is backwards compatible; "
+                "renames, drops and type changes need a new dataset version"
+            )
+        return data
+
+
+# ── response models (typed so the UI's OpenAPI codegen gets real types) ──────
+
+
+class CreatedDataset(BaseModel):
+    entity_id: str
+    version: int
+    op_id: str
+    warehouse_name: str
+    physical_identifier: str
+
+
+class DatasetSummary(BaseModel):
+    namespace: str
+    name: str
+    version: int
+    partition_by: list[str]
+    description: str | None
+    created_by: str
+    created_at: datetime
+    dropped_at: datetime | None
+    warehouses: list[str]
+
+
+class OpRow(BaseModel):
+    op_id: str
+    warehouse_name: str | None
+    op_kind: str
+    actor: str
+    process_kind: str | None
+    process_name: str | None
+    process_run_id: str | None
+    snapshot_id: int | None
+    details: dict[str, Any]
+    occurred_at: datetime
+
+
+class OpDetail(OpRow):
+    entity_id: str
+
+
+class SchemaOut(BaseModel):
+    schema_id: int
+    fields: list[FieldSpec]
+
+
+class PartitionOut(BaseModel):
+    partition: dict[str, Any]
+    record_count: int
+    file_count: int
+    spec_id: int | None
+
+
+class PartitionsOut(BaseModel):
+    partition_by: list[str]
+    partitions: list[PartitionOut]
+
+
+class WarehouseOut(BaseModel):
+    # no catalog/storage config: those carry credentials
+    warehouse_name: str
+    platform: str
+    catalog_kind: str
+    storage_kind: str
+
+
+class AlterResult(BaseModel):
+    op_id: str
+    schema_id: int
+    fields: list[FieldSpec]
 
 
 class RollbackRequest(BaseModel):
@@ -227,7 +353,7 @@ def _resolution_doc(entity, placement) -> dict[str, Any]:
     }
 
 
-@app.post("/v1/datasets", status_code=201)
+@app.post("/v1/datasets", status_code=201, response_model=CreatedDataset)
 def create_dataset(body: CreateDataset, conn: Conn, actor: Actor = "unknown"):
     with conn.cursor() as cur:
         cur.execute(
@@ -297,13 +423,13 @@ def create_dataset(body: CreateDataset, conn: Conn, actor: Actor = "unknown"):
     }
 
 
-@app.get("/v1/datasets")
+@app.get("/v1/datasets", response_model=list[DatasetSummary])
 def list_datasets(conn: Conn):
     with conn.cursor() as cur:
         cur.execute(
             """SELECT e.namespace, e.name, e.version, e.partition_by, e.description,
                       e.created_by, e.created_at, e.dropped_at,
-                      array_agg(p.warehouse_name) AS warehouses
+                      array_remove(array_agg(p.warehouse_name), NULL) AS warehouses
                FROM entities e LEFT JOIN entity_placements p USING (entity_id)
                WHERE e.entity_type = 'dataset'
                GROUP BY e.entity_id ORDER BY e.namespace, e.name, e.version""",
@@ -342,7 +468,7 @@ def report_op(namespace: str, name: str, body: OpReport, conn: Conn, actor: Acto
     return {"op_id": op_id}
 
 
-@app.get("/v1/ops/{op_id}")
+@app.get("/v1/ops/{op_id}", response_model=OpDetail)
 def get_op(op_id: str, conn: Conn):
     with conn.cursor() as cur:
         cur.execute(
@@ -358,7 +484,7 @@ def get_op(op_id: str, conn: Conn):
     return row
 
 
-@app.get("/v1/datasets/{namespace}/{name}/history")
+@app.get("/v1/datasets/{namespace}/{name}/history", response_model=list[OpRow])
 def history(
     namespace: str,
     name: str,
@@ -380,26 +506,23 @@ def history(
         return cur.fetchall()
 
 
-@app.post("/v1/datasets/{namespace}/{name}/alter")
+@app.post("/v1/datasets/{namespace}/{name}/alter", response_model=AlterResult)
 def alter_dataset(
     namespace: str, name: str, body: AlterRequest, conn: Conn, actor: Actor = "unknown"
 ):
-    protected = {OP_ID_COLUMN} & (
-        set(body.add_columns) | set(body.rename_columns) | set(body.drop_columns)
-    )
-    if protected:
+    if OP_ID_COLUMN in body.add_columns:
         raise HTTPException(400, f"{OP_ID_COLUMN!r} is reserved")
     entity, placement, table = _load_table(conn, namespace, name, body.version, body.platform)
-    bad = set(body.add_columns.values()) - set(FIELD_TYPES)
-    if bad:
-        raise HTTPException(400, f"unsupported field types: {sorted(bad)}")
-    with table.update_schema() as update:
-        for col, type_name in body.add_columns.items():
-            update.add_column(col, FIELD_TYPES[type_name])
-        for old, new in body.rename_columns.items():
-            update.rename_column(old, new)
-        for col in body.drop_columns:
-            update.delete_column(col)
+    if existing := sorted({f.name for f in table.schema().fields} & set(body.add_columns)):
+        raise HTTPException(409, f"columns already exist: {existing}")
+    add_columns = body.model_dump()["add_columns"]
+    next_id = new_id_counter()  # placeholder ids; update_schema assigns the real ones
+    try:
+        with table.update_schema() as update:
+            for col, spec in add_columns.items():
+                update.add_column(col, iceberg_type(spec, next_id), required=False)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     op_id = _insert_op(
         conn,
         entity_id=entity["entity_id"],
@@ -408,13 +531,12 @@ def alter_dataset(
         warehouse_name=placement["warehouse_name"],
         process=body.process,
         details={
-            "add_columns": body.add_columns,
-            "rename_columns": body.rename_columns,
-            "drop_columns": body.drop_columns,
+            "add_columns": add_columns,
             "schema_id": table.schema().schema_id,
         },
     )
-    return {"op_id": op_id, "schema": schema_as_json(table.schema())}
+    schema = table.schema()
+    return {"op_id": op_id, "schema_id": schema.schema_id, "fields": schema_as_json(schema)}
 
 
 @app.post("/v1/datasets/{namespace}/{name}/rollback")
@@ -437,7 +559,7 @@ def rollback_dataset(
     return {"op_id": op_id, "snapshot_id": snapshot_id}
 
 
-@app.get("/v1/datasets/{namespace}/{name}/schema")
+@app.get("/v1/datasets/{namespace}/{name}/schema", response_model=SchemaOut)
 def dataset_schema(
     namespace: str,
     name: str,
@@ -456,7 +578,7 @@ def dataset_schema(
     return {"schema_id": schema.schema_id, "fields": schema_as_json(schema)}
 
 
-@app.get("/v1/datasets/{namespace}/{name}/partitions")
+@app.get("/v1/datasets/{namespace}/{name}/partitions", response_model=PartitionsOut)
 def dataset_partitions(
     namespace: str,
     name: str,
@@ -484,7 +606,7 @@ def dataset_partitions(
     }
 
 
-@app.get("/v1/warehouses")
+@app.get("/v1/warehouses", response_model=list[WarehouseOut])
 def list_warehouses(conn: Conn):
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM warehouses ORDER BY warehouse_name")

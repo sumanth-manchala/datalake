@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS entities (
     namespace    text NOT NULL,
     name         text NOT NULL,
     version      int  NOT NULL DEFAULT 1,
-    partition_by jsonb,                   -- datasets only; may be [] (explicit unpartitioned)
+    partition_by jsonb,                   -- datasets only; non-empty: writes are dynamic partition overwrites
     description  text,
     created_by   text NOT NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS ops (
     op_id          uuid PRIMARY KEY,
     entity_id      uuid NOT NULL REFERENCES entities (entity_id),
     warehouse_name text,                  -- which placement the op hit
-    op_kind        text NOT NULL,         -- create|append|overwrite|alter|rollback|drop|read
+    op_kind        text NOT NULL,         -- create|overwrite|alter|rollback|drop|read
     actor          text NOT NULL,
     process_kind   text,                  -- 'pipeline' | 'model_run' | 'notebook' | 'adhoc'...
     process_name   text,

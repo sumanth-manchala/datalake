@@ -33,6 +33,11 @@ s3-start = "bash scripts/init_s3.sh"
 s3-stop = "bash -c 'kill -9 $(cat .s3data/*.pid) 2> /dev/null; rm -f .s3data/*.pid; true'"
 api-start = { cmd = "uvicorn --app-dir api/src lakehouse_api.app:app --port 8000", depends-on = ["db-start"] }
 start = { cmd = "airflow standalone", depends-on = ["db-start"] }
+api-openapi = "python -c 'import json, sys; sys.path.insert(0, \"api/src\"); from lakehouse_api.app import app; json.dump(app.openapi(), open(\"ui/openapi.json\", \"w\"), indent=2)'"
+ui-install = "pnpm -C ui install"
+ui-codegen = { cmd = "pnpm -C ui codegen", depends-on = ["api-openapi"] }
+ui-dev = "pnpm -C ui dev"
+ui-test = "pnpm -C ui test"
 
 [dependencies]
 python = "3.12.*"
@@ -54,3 +59,5 @@ s3fs = ">=2026.6.0,<2027"
 seaweedfs = ">=4.40,<5"
 rustfs = ">=1.0.0beta.12,<2"
 pandas = ">=3.0.5,<4"
+nodejs = "24.*"
+pnpm = ">=12.4.1,<13"
